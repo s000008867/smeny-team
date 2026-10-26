@@ -785,6 +785,9 @@ body.pt-on{overflow:hidden}
 .pt-price input{width:110px;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;text-align:right}
 .pt-seg{display:flex;gap:6px;flex-wrap:wrap}
 .pt-seg button{padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;font-size:13px}
+.pt-wk{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:baseline}
+.pt-wk small{color:var(--muted);font-size:12px}
+.pt-wk.done b{color:var(--muted)}
 .pt-seg button[aria-pressed="true"]{border-color:#f0a020;background:color-mix(in srgb,#f0a020 18%,var(--bg))}
 .pt-tgl{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.35;margin-top:4px}
 .pt-tgl input{width:20px;height:20px;flex:none;margin-top:1px}
@@ -1638,7 +1641,40 @@ window.LOOK = (function(){
     return { sum, bikes, days: n, best, by, perDay, avg: n ? sum / n : 0 };
   }
 
-  G.SmenyCalc = { PT_PRICES, PT_NAMES, ptPrices, ptDay, ptMonth, VERSION, key, ord, opts, tp, pay, inBonus, isShift, pctFor, level, calc, periodOf, goalDay,
+  // ---------- Парт-тайм: выплата раз в неделю, по четвергам ----------
+  // Рабочая неделя — понедельник…воскресенье. Деньги за неё приходят в ближайший четверг после неё
+  // (понедельник + 10 дней). Например, неделя 19–25 октября → выплата в четверг 29 октября.
+  const PT_PAY_WD = 4;                               // 4 = четверг (0 — воскресенье)
+  const ymd = t => ({ y: t.getUTCFullYear(), m: t.getUTCMonth(), d: t.getUTCDate() });
+  const utc = (y, m, d) => new Date(Date.UTC(y, m, d));
+  const idOf = t => t.toISOString().slice(0, 10);   // "2026-10-26"
+  // Неделя (пн–вс), в которую попадает день: начало, конец, день выплаты и сумма
+  function ptWeek(days, y, m, d) {
+    const t = utc(y, m, d), back = (t.getUTCDay() + 6) % 7;          // сколько дней назад был понедельник
+    const mon = utc(y, m, d - back), sun = utc(y, m, d - back + 6), pay = utc(y, m, d - back + 10); // пн + 10 дней = чт следующей недели
+    let sum = 0, bikes = 0, n = 0;
+    for (let i = 0; i < 7; i++) {
+      const L = ((days || {})[idOf(utc(y, m, d - back + i))] || {}).pt;
+      if (L && L.length) { const r = ptDay(L); sum += r.sum; bikes += r.bikes; n++; }
+    }
+    return { from: ymd(mon), to: ymd(sun), pay: ymd(pay), sum, bikes, days: n };
+  }
+  // Ближайшая выплата, если сегодня y-m-d: в четверг — сегодняшняя, иначе — следующий четверг.
+  // Она за прошлую неделю (пн–вс), которая закончилась перед этим четвергом.
+  function ptNextPay(days, y, m, d) {
+    const t = utc(y, m, d), ahead = (PT_PAY_WD - t.getUTCDay() + 7) % 7;
+    const thu = utc(y, m, d + ahead), w = ymd(utc(thu.getUTCFullYear(), thu.getUTCMonth(), thu.getUTCDate() - 7));
+    return ptWeek(days, w.y, w.m, w.d);
+  }
+  // Все недели, которые задевают месяц (для списка «по неделям»)
+  function ptWeeks(days, y, m) {
+    const out = [], last = dim(y, m);
+    for (let d = 1; d <= last; d += 7) out.push(ptWeek(days, y, m, d));
+    const w = ptWeek(days, y, m, last); if (!out.length || out[out.length - 1].from.d !== w.from.d || out[out.length - 1].from.m !== w.from.m) out.push(w);
+    return out;
+  }
+
+  G.SmenyCalc = { PT_PRICES, PT_NAMES, ptPrices, ptDay, ptMonth, ptWeek, ptNextPay, ptWeeks, VERSION, key, ord, opts, tp, pay, inBonus, isShift, pctFor, level, calc, periodOf, goalDay,
     PAYDEF, payCfg, netv, advance, salary, HOLI, payDay, payDates, dim };
 })(typeof globalThis !== "undefined" ? globalThis : this);
 
@@ -3869,7 +3905,8 @@ window.LOOK = (function(){
     const up=$("mnUpcoming"); up.textContent="";
     fut.slice(1,3).forEach(e=>{ const r=el("div"); r.append(el("span","", evName(e)+", "+evDate(e)), el("b","", e.amt>0 ? (e.kind==="adv" && P.mode==="fixed" ? "" : "≈ ")+fmt(e.amt) : "—")); up.appendChild(r); });
     { const c=calc(now.getFullYear(), now.getMonth()), r=el("div"); r.append(el("span","", "Всего за "+MONTHS[now.getMonth()]+" по отметкам"), el("b","", fmt(netv(c.total)))); up.appendChild(r); }
-    { const pm=SC.ptMonth(dayx, now.getFullYear(), now.getMonth()); if(pm.sum){ const r=el("div"); r.append(el("span","", "Парт-тайм за "+MONTHS[now.getMonth()]+" · "+bikesW(pm.bikes)), el("b","", fmt(pm.sum))); up.appendChild(r); } }
+    if(ptCfg().pay==="week"){ const np=ptNext(); if(np.sum){ const r=el("div"); r.append(el("span","", "Парт-тайм, чт "+dShort(np.pay)+" · за "+wRange(np)), el("b","", fmt(np.sum))); up.appendChild(r); } }
+    else { const pm=SC.ptMonth(dayx, now.getFullYear(), now.getMonth()); if(pm.sum){ const r=el("div"); r.append(el("span","", "Парт-тайм за "+MONTHS[now.getMonth()]+" · "+bikesW(pm.bikes)), el("b","", fmt(pm.sum))); up.appendChild(r); } }
     // Сверка: прошедшие выплаты, свежие сверху
     const box=$("mnCheck"); box.textContent="";
     const list=past.filter(e=>e.amt>0 || evGot(e)!=null).reverse().slice(0,4);
@@ -4218,7 +4255,11 @@ window.LOOK = (function(){
 
   // ======== Парт-тайм: ремонт байков на складе за деньги (отдельно от смен и баллов) ========
   const PT_ORDER = ["n","l","m","h","s"], PT_SHORT = {n:"без типа", l:"лёгкий", m:"средний", h:"тяжёлый", s:"сверх"};
-  const ptCfg = () => Object.assign({inMoney:false, pay:"none"}, settings.pt||{}, {prices: SC.ptPrices(settings)});
+  // Выплата парт-тайма: "week" — раз в неделю по четвергам (по умолчанию), "sal" — с зарплатой, "now" — сразу
+  const ptCfg = () => { const c=Object.assign({inMoney:false, pay:"week"}, settings.pt||{}, {prices: SC.ptPrices(settings)}); if(!["week","sal","now"].includes(c.pay)) c.pay="week"; return c; };
+  const dShort = o => o.d+" "+GEN[o.m].slice(0,3);                                  // «29 окт»
+  const wRange = w => w.from.m===w.to.m ? w.from.d+"–"+dShort(w.to) : dShort(w.from)+" – "+dShort(w.to); // «19–25 окт»
+  const ptNext = () => SC.ptNextPay(dayx, now.getFullYear(), now.getMonth(), now.getDate());
   const ptList = id => (dayData(id).pt || []).slice();
   const ptSave = (id, list) => setDay(id, Object.assign({}, dayData(id), {pt:list}));
   const ptK = a => a>=1000 ? (Math.round(a/100)/10).toString().replace(".",",")+"к" : String(a);
@@ -4307,10 +4348,25 @@ window.LOOK = (function(){
     const tiles=el("div","pt-tiles"), t1=el("div","pt-tile"), t2=el("div","pt-tile");
     t1.append(el("small","","Лучший день"), el("b","", M.best ? fmtFull(M.best.sum) : "—"), el("small","", M.best ? M.best.d+" "+GEN[m].slice(0,3)+" · "+bikesW(M.best.bikes) : "ещё нет"));
     let payW="не указана", paySub="укажите ниже";
-    if(cfg.pay==="sal"){ const pd=SC.payDates(settings, y, m).sal; payW=pd.d+" "+GEN[pd.m].slice(0,3); paySub="с зарплатой · "+fmtFull(M.sum); }
+    if(cfg.pay==="week"){ const np=ptNext(); payW="чт, "+dShort(np.pay); paySub="за "+wRange(np)+" · "+fmtFull(np.sum); }
+    else if(cfg.pay==="sal"){ const pd=SC.payDates(settings, y, m).sal; payW=pd.d+" "+GEN[pd.m].slice(0,3); paySub="с зарплатой · "+fmtFull(M.sum); }
     else if(cfg.pay==="now"){ payW="сразу"; paySub="после каждой смены"; }
     t2.append(el("small","","Выплата"), el("b","", payW), el("small","", paySub));
     tiles.append(t1, t2); S.appendChild(tiles);
+
+    // Выплаты по неделям (пн–вс → четверг после)
+    if(cfg.pay==="week" && M.bikes){
+      const wc=el("div","pt-card"), today=ds(now.getFullYear(), now.getMonth(), now.getDate());
+      wc.appendChild(el("span","pt-lbl","Выплаты по неделям"));
+      SC.ptWeeks(dayx, y, m).forEach(w=>{
+        if(!w.sum) return;
+        const payId=ds(w.pay.y, w.pay.m, w.pay.d), done = payId<=today, curW = ds(w.to.y, w.to.m, w.to.d)>=today;
+        const r=el("div","pt-row pt-li pt-wk"+(done?" done":""));
+        r.append(el("span","", wRange(w)), el("small","", done ? "✓ выплачено "+dShort(w.pay) : curW ? "идёт · выплата "+dShort(w.pay) : "чт, "+dShort(w.pay)), el("b","", fmtFull(w.sum)));
+        wc.appendChild(r);
+      });
+      S.appendChild(wc);
+    }
 
     // Сколько каких ремонтов
     if(M.bikes){ const bt=el("div","pt-card"); bt.appendChild(el("span","pt-lbl","Ремонты за месяц"));
@@ -4329,7 +4385,7 @@ window.LOOK = (function(){
     st.appendChild(pg);
     st.appendChild(el("span","pt-lbl pt-lbl2","Когда выплата"));
     const seg=el("div","pt-seg");
-    [["none","Не указывать"],["sal","С зарплатой"],["now","Сразу"]].forEach(([v,t])=>{ const b=el("button","",t); b.type="button"; b.setAttribute("aria-pressed", String(cfg.pay===v));
+    [["week","Раз в неделю, по четвергам"],["sal","С зарплатой"],["now","Сразу"]].forEach(([v,t])=>{ const b=el("button","",t); b.type="button"; b.setAttribute("aria-pressed", String(cfg.pay===v));
       b.onclick=()=>{ settings.pt=Object.assign({}, settings.pt||{}, {pay:v}); saveSettings(); renderPt(); }; seg.appendChild(b); });
     st.appendChild(seg);
     const tg2=el("label","pt-tgl"), cb=el("input"); cb.type="checkbox"; cb.checked=!!cfg.inMoney;
