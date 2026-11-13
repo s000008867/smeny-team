@@ -1549,6 +1549,11 @@ window.LOOK = (function(){
   // Старые записи хранили true вместо типа — это обычная смена
   const tp = v => v === true ? "w" : KNOWN[v] ? v : null;
 
+  // Правило про опоздания действует с 14.11.2026: раньше этой даты отметка «опоздание» не ставится,
+  // а если всё же стоит (старая копия, импорт) — считается обычной сменой.
+  const LATE_FROM = "2026-11-14";
+  const lateOk = (y, m, d) => key(y, m) + "-" + String(d).padStart(2, "0") >= LATE_FROM;
+  const tpOn = (v, y, m, d) => { const t = tp(v); return t === "l" && !lateOk(y, m, +d) ? "w" : t; };
   function opts(settings) {
     const s = Object.assign({}, DEF, settings || {});
     s.rate = +s.rate; s.pct = +s.pct; s.minPts = +s.minPts; s.maxPts = +s.maxPts;
@@ -1583,12 +1588,12 @@ window.LOOK = (function(){
     const py = m === 0 ? y - 1 : y, pm = m === 0 ? 11 : m - 1, prev = months[key(py, pm)] || {};
     const cnt = { w: 0, x: 0, s: 0, a: 0, o: 0, l: 0 };
     let base = 0;
-    for (const d in cur) { const t = tp(cur[d]); if (!t) continue; cnt[t]++; base += pay(st, t); }
+    for (const d in cur) { const t = tpOn(cur[d], y, m, d); if (!t) continue; cnt[t]++; base += pay(st, t); }
     let bonusBase = 0, bonusDays = 0, scored = 0, ptsSum = 0;
     const lv = { full: 0, mid: 0, low: 0 }, list = [], dates = [];
     const add = (days, P, from, to, mo, yy) => {
       for (const d in days) {
-        const t = tp(days[d]);
+        const t = tpOn(days[d], yy, mo, d);
         if (!t || +d < from || +d > to || !inBonus(st, t)) continue;
         const o = ord(yy, mo, +d);
         bonusBase += pay(st, t); bonusDays++; dates.push(o);
@@ -1785,7 +1790,7 @@ window.LOOK = (function(){
     return out;
   }
 
-  G.SmenyCalc = { steps, PT_PRICES, PT_RATES, PT_NAMES, ptRate, ptPrices, ptFix, ptDay, ptMonth, ptWeek, ptNextPay, ptWeeks, VERSION, key, ord, opts, tp, pay, inBonus, isShift, pctFor, level, calc, periodOf, goalDay,
+  G.SmenyCalc = { steps, LATE_FROM, lateOk, PT_PRICES, PT_RATES, PT_NAMES, ptRate, ptPrices, ptFix, ptDay, ptMonth, ptWeek, ptNextPay, ptWeeks, VERSION, key, ord, opts, tp, pay, inBonus, isShift, pctFor, level, calc, periodOf, goalDay,
     PAYDEF, payCfg, netv, advance, salary, HOLI, payDay, payDates, dim };
 })(typeof globalThis !== "undefined" ? globalThis : this);
 
@@ -2325,12 +2330,15 @@ window.LOOK = (function(){
     busy[k] = false;
   }
 
+  // Правило про опоздания — с 14 ноября 2026: раньше этой даты «Опоздание» не ставится (ограничение снимается само)
+  const LATE_MSG = "Опоздание можно отметить с 14 ноября 2026 — с этого дня действует правило.";
   function tap(d){
     const k = key(view.y, view.m), days = Object.assign({}, months[k]||{});
     if(brush==="p"){
       if(!isShift(days[d])){ status("Баллы ставятся только на смены. Сначала отметьте этот день как смену.", true); return; }
       sfx.click(); openEditor(d); return;
     }
+    if(brush==="l" && days[d]!=="l" && !SC.lateOk(view.y, view.m, d)){ status(LATE_MSG, true); return; }
     if(days[d]===brush){ delete days[d]; sfx.unmark(); } else { days[d] = brush; sfx.mark(brush); }
     if(!isShift(days[d]) && pts[k] && pts[k][d]!=null){ pts[k]=Object.assign({},pts[k]); delete pts[k][d]; }
     months[k] = days; render(); scheduleSave(k);
@@ -3510,7 +3518,8 @@ window.LOOK = (function(){
     const shade=el("div","pop-shade"), m=el("div","pop-menu"); m.setAttribute("role","dialog"); m.setAttribute("aria-label","День "+d);
     const h=el("div","pm-h"); h.append(el("b","", d+" "+GEN[view.m]), el("span","", wd+(t ? " · "+T[t].name.toLowerCase() : ""))); m.appendChild(h);
     const types=el("div","pm-types");
-    TYPES.forEach(tp=>{ const b=el("button","t-"+tp.k); b.innerHTML='<i></i>'; b.appendChild(document.createTextNode(tp.name)); b.setAttribute("aria-pressed", String(t===tp.k));
+    TYPES.forEach(tp=>{ if(tp.k==="l" && t!=="l" && !SC.lateOk(view.y, view.m, d)) return;
+      const b=el("button","t-"+tp.k); b.innerHTML='<i></i>'; b.appendChild(document.createTextNode(tp.name)); b.setAttribute("aria-pressed", String(t===tp.k));
       b.onclick=()=>{ const S0=snap([k],[]); setTimeout(()=>{ const t2=(months[k]||{})[d]; offerUndo(t2 ? d+" "+GEN[view.m]+": "+T[t2].name.toLowerCase() : d+" "+GEN[view.m]+": отметка снята", S0); }, 0); const days=Object.assign({}, months[k]||{}); if(days[d]===tp.k){ delete days[d]; sfx.unmark(); } else { days[d]=tp.k; sfx.mark(tp.k); }
         if(!isShift(days[d]) && pts[k] && pts[k][d]!=null){ pts[k]=Object.assign({},pts[k]); delete pts[k][d]; }
         months[k]=days; render(); scheduleSave(k); closeDayMenu(); if(isShift(days[d])) openDayMenu(d, anchor); };
