@@ -1,5 +1,5 @@
 // Офлайн-работа: сохраняем приложение в кэш и открываем его без интернета.
-const CACHE = "smeny-66e6080";
+const CACHE = "smeny-3516954";
 // "./" и index.html — одна и та же страница, качаем её один раз
 const SHELL = ["index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
